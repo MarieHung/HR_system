@@ -695,7 +695,8 @@ class TeacherStatsApp:
         ttk.Label(main, text="🌏 赴大陸地區 - 主管名單自動化統計中心", font=('Microsoft JhengHei', 14, 'bold')).pack(pady=5)
         ttk.Label(main, text="說明：只需選擇一份包含主管名單的 Excel 檔案，系統將自動完成所有統計與報表更新。", foreground="blue").pack(pady=(0, 10))
         btn_f = ttk.LabelFrame(main, text="操作指令", padding=15); btn_f.pack(fill=tk.X, pady=5)
-        ttk.Button(btn_f, text="📂 選擇主管名單檔案並執行統計", command=self.load_manager_list).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_f, text="📂 執行主管統計 (職等)", command=self.load_manager_list).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_f, text="👨‍🏫 計算教兼主管", command=self.process_teacher_managers).pack(side=tk.LEFT, padx=10)
         ttk.Button(btn_f, text="🧹 清空結果", command=lambda: self.t_out.delete(1.0, tk.END)).pack(side=tk.LEFT, padx=10)
         self.file_label_t = ttk.Label(btn_f, text="尚未選擇檔案", foreground="gray"); self.file_label_t.pack(side=tk.LEFT, padx=20)
         self.t_out = tk.Text(main, font=('Microsoft JhengHei', 11), bg="#fdfefe"); self.t_out.pack(fill=tk.BOTH, expand=True, pady=10)
@@ -722,33 +723,105 @@ class TeacherStatsApp:
             df_calc = df.copy()
             df_calc['rank_num'] = pd.to_numeric(df_calc.iloc[:, rank_idx], errors='coerce').fillna(0)
             df_calc['name_str'] = df_calc.iloc[:, name_idx].astype(str).str.strip()
-            df_calc['orig_job'] = df_calc.iloc[:, job_idx].astype(str).str.strip().upper()
-            mask_teacher = (df_calc['orig_job'] != '#N/A') & (df_calc['orig_job'] != 'NAN') & (df_calc['rank_num'] >= 11)
+            df_calc['orig_job'] = df_calc.iloc[:, job_idx].astype(str).str.strip().str.upper()
+            # 統計全校兼行政職教師 (不論職等，只要教師職稱非 #N/A 且不重複)
+            mask_teacher = (df_calc['orig_job'] != '#N/A') & (df_calc['orig_job'] != 'NAN') & (df_calc['rank_num'] > 0)
             df_teacher_mgrs = df_calc[mask_teacher].copy()
-            df_unique_teacher_mgrs = df_teacher_mgrs.sort_values(by='rank_num', ascending=False).drop_duplicates(subset='name_str', keep='first')
+            # 依姓名去重，保留一筆
+            df_unique_teacher_mgrs = df_teacher_mgrs.drop_duplicates(subset='name_str', keep='first')
             final_teacher_count = len(df_unique_teacher_mgrs)
+            
+            # 額外統計 11 職等以上之兼行政教師
+            df_teacher_11plus = df_unique_teacher_mgrs[df_unique_teacher_mgrs['rank_num'] >= 11]
+            final_teacher_11plus_count = len(df_teacher_11plus)
+
+            # 全校主管職等分布統計 (包含所有行政人員)
             df_all_unique = df_calc.sort_values(by='rank_num', ascending=False).drop_duplicates(subset='name_str', keep='first')
             df_all_unique = df_all_unique[~df_all_unique['name_str'].isin(['nan', 'None', '', '姓名', '憪'])]
             rank_counts = df_all_unique['rank_num'].value_counts().sort_index(ascending=False).reset_index()
             rank_counts.columns = ['職等', '人數']
+            
             all_sheets_data["主管名單_刪減計算用"] = df_calc[df_calc['rank_num'] > 0]
             all_sheets_data["依職等統計人數"] = rank_counts
             try:
                 with pd.ExcelWriter(target_file, engine='openpyxl') as writer:
                     for s_name, s_df in all_sheets_data.items(): s_df.to_excel(writer, sheet_name=s_name, index=False)
             except PermissionError:
-                raise PermissionError("無法寫入檔案！請確認：\\n1. 檔案是否已在 Excel 中關閉\\n2. 請關閉檔案總管的『預覽窗格』\\n3. 檔案未被其他程式佔用")
+                raise PermissionError("無法寫入檔案！請確認：\n1. 檔案是否已在 Excel 中關閉\n2. 請關閉檔案總管的『預覽窗格』\n3. 檔案未被其他程式佔用")
+            
             self.t_out.delete(1.0, tk.END)
-            self.t_out.insert(tk.END, f"【主管名單一鍵自動化統計報告】\\n" + "="*60 + "\\n")
-            self.t_out.insert(tk.END, f"📁 檔案名稱：{os.path.basename(target_file)}\\n📄 使用分頁：{sheet_name}\\n" + "-"*60 + "\\n")
-            self.t_out.insert(tk.END, f"📊 兼行政職務教師 (11職等以上) ： {final_teacher_count} 名\\n" + "-"*60 + "\\n")
-            self.t_out.insert(tk.END, f"【全校主管職等分布統計 - 去重後】\\n")
+            self.t_out.insert(tk.END, f"【主管名單自動化統計報告】\n" + "="*60 + "\n")
+            self.t_out.insert(tk.END, f"📁 檔案名稱    ： {os.path.basename(target_file)}\n")
+            self.t_out.insert(tk.END, f"📄 使用分頁    ： {sheet_name}\n")
+            self.t_out.insert(tk.END, "-"*60 + "\n")
+            self.t_out.insert(tk.END, f"📊 兼行政職教師總人數 (含10職等以下) ： {final_teacher_count:>5} 名\n")
+            self.t_out.insert(tk.END, f"📊 其中 11 職等以上之兼行政職教師     ： {final_teacher_11plus_count:>5} 名\n")
+            self.t_out.insert(tk.END, "-"*60 + "\n")
+            self.t_out.insert(tk.END, f"【全校主管職等分布統計】\n")
             for _, row_s in rank_counts.iterrows():
-                if row_s['職等'] > 0: self.t_out.insert(tk.END, f" - 第 {int(row_s['職等']):>2} 職等：{int(row_s['人數']):>3} 人\\n")
-            self.t_out.insert(tk.END, "="*60 + "\\n✅ 統計完成！已成功更新 Excel 報表。\\n")
-            messagebox.showinfo("成功", f"統計完成！\\n11職等以上教師：{final_teacher_count} 名")
+                if row_s['職等'] > 0: 
+                    self.t_out.insert(tk.END, f"  - 第 {int(row_s['職等']):>2} 職等 ： {int(row_s['人數']):>4} 人\n")
+            self.t_out.insert(tk.END, "="*60 + "\n✅ 統計完成！已成功更新 Excel 報表。\n")
+            messagebox.showinfo("成功", f"統計完成！\n全校兼行政職教師總數：{final_teacher_count} 名\n(含 11 職等以上：{final_teacher_11plus_count} 名)")
         except PermissionError as pe: messagebox.showerror("檔案存取失敗", str(pe))
         except Exception as e: messagebox.showerror("統計失敗", f"錯誤原因：{str(e)}")
+
+    def process_teacher_managers(self):
+        p = filedialog.askopenfilename(title="選擇主管名單 Excel 檔案", filetypes=[("Excel files", "*.xlsx;*.xls")])
+        if not p: return
+        target_file = p
+        try:
+            all_sheets_data = {}
+            with pd.ExcelFile(target_file) as xl:
+                # 尋找「主管名單」Sheet
+                sheet_name = next((s for s in xl.sheet_names if any(k in s for k in ["主管", "名單"])), xl.sheet_names[0])
+                for s in xl.sheet_names: all_sheets_data[s] = pd.read_excel(xl, sheet_name=s)
+            
+            df_orig = all_sheets_data[sheet_name].copy()
+            
+            # 尋找關鍵欄位
+            def find_col_idx(df, keywords):
+                for i, col in enumerate(df.columns):
+                    if any(k in str(col) for k in keywords): return col
+                return None
+
+            c_name = find_col_idx(df_orig, ["姓名", "憪"])
+            c_job = find_col_idx(df_orig, ["教師職稱", "本職"])
+            
+            if not c_name or not c_job:
+                messagebox.showerror("錯誤", "找不到『姓名』或『教師職稱』欄位，請檢查檔案格式。")
+                return
+
+            # 1. 刪除教師職稱為 #N/A 的 row
+            # 使用 .str 存取器來執行 upper()，並處理可能的缺失值
+            mask_na = df_orig[c_job].astype(str).str.upper().str.strip() == "#N/A"
+            df_filtered = df_orig[~mask_na].copy()
+            
+            # 2. 刪除姓名重複的 row (保留第一筆)
+            df_filtered = df_filtered.drop_duplicates(subset=c_name, keep='first')
+            
+            # 將結果存入新 Sheet
+            new_sheet_name = "教兼主管名單(已過濾)"
+            all_sheets_data[new_sheet_name] = df_filtered
+            
+            try:
+                with pd.ExcelWriter(target_file, engine='openpyxl') as writer:
+                    for s_n, s_df in all_sheets_data.items():
+                        s_df.to_excel(writer, sheet_name=s_n, index=False)
+            except PermissionError:
+                raise PermissionError("無法寫入檔案！請關閉 Excel 中的檔案。")
+
+            self.t_out.delete(1.0, tk.END)
+            self.t_out.insert(tk.END, f"【教兼主管名單處理報告】\n" + "="*50 + "\n")
+            self.t_out.insert(tk.END, f"📁 檔案名稱    ： {os.path.basename(target_file)}\n")
+            self.t_out.insert(tk.END, f"📄 原始總數量  ： {len(df_orig):>5} 筆\n")
+            self.t_out.insert(tk.END, f"✅ 過濾後數量  ： {len(df_filtered):>5} 筆\n")
+            self.t_out.insert(tk.END, f"✨ 新增工作表  ： {new_sheet_name}\n")
+            self.t_out.insert(tk.END, "="*50 + "\n")
+            messagebox.showinfo("成功", f"處理完成！\n已過濾出 {len(df_filtered)} 筆教兼主管名單。")
+            
+        except Exception as e:
+            messagebox.showerror("處理失敗", str(e))
 
     def gen_travel_report(self):
         if not hasattr(self, 'df_travel') or self.df_travel is None:
@@ -896,25 +969,29 @@ class TeacherStatsApp:
         self.sheet_scroll8.pack(side=tk.RIGHT, fill=tk.Y)
 
         # 搜尋條件
-        sf = ttk.LabelFrame(left_panel, text="3. 搜尋關鍵字", padding=10)
+        sf = ttk.LabelFrame(left_panel, text="3. 輸入搜尋條件", padding=10)
         sf.pack(fill=tk.X, pady=5)
         
         grid_f = ttk.Frame(sf)
         grid_f.pack(fill=tk.X)
         
-        ttk.Label(grid_f, text="姓名:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Label(grid_f, text="生效日期:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.tab8_date_e = ttk.Entry(grid_f, width=20)
+        self.tab8_date_e.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        
+        ttk.Label(grid_f, text="姓名:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.tab8_name_e = ttk.Entry(grid_f, width=20)
-        self.tab8_name_e.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        self.tab8_name_e.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
         
-        ttk.Label(grid_f, text="關鍵字:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Label(grid_f, text="關鍵字:").grid(row=2, column=0, sticky=tk.W, pady=2)
         self.tab8_kw_e = ttk.Entry(grid_f, width=20)
-        self.tab8_kw_e.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+        self.tab8_kw_e.grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
         
-        self.tab8_search_btn = ttk.Button(left_panel, text="🔍 執行搜尋", command=self.search_changes_logic)
+        self.tab8_search_btn = ttk.Button(left_panel, text="🚀 執行篩選查詢", command=self.search_changes_logic)
         self.tab8_search_btn.pack(fill=tk.X, pady=10)
 
         # --- 右側：結果顯示區域 ---
-        ttk.Label(right_panel, text="📋 異動紀錄結果", font=('Microsoft JhengHei', 14, 'bold')).pack(pady=5, anchor=tk.W)
+        ttk.Label(right_panel, text="📋 異動紀錄結果 (依據搜尋條件篩選)", font=('Microsoft JhengHei', 14, 'bold')).pack(pady=5, anchor=tk.W)
         
         table_f = ttk.Frame(right_panel)
         table_f.pack(fill=tk.BOTH, expand=True)
@@ -982,6 +1059,7 @@ class TeacherStatsApp:
             messagebox.showwarning("提示", "請至少勾選一個工作表")
             return
             
+        d_val = self.tab8_date_e.get().strip()
         n_val = self.tab8_name_e.get().strip()
         k_val = self.tab8_kw_e.get().strip()
         
@@ -989,27 +1067,40 @@ class TeacherStatsApp:
             self.tree8.delete(i)
             
         try:
-            # 判斷是否為「活頁簿」相關檔案 (活頁簿1 或 活頁簿2)
             fname = os.path.basename(self.tab8_file_path)
-            is_workbook_fmt = "活頁簿" in fname
+            # 判斷是否為特殊格式檔案 (含標題列需跳過者)
+            is_special_fmt = any(k in fname for k in ["活頁簿", "總異動", "114"])
             
             for s in sel_sheets:
-                if is_workbook_fmt:
+                if is_special_fmt:
+                    # 讀取整張表以判斷結構
                     df_full = pd.read_excel(self.tab8_file_path, sheet_name=s, header=None)
+                    if df_full.empty: continue
                     
-                    # 判斷資料起始位置 (活頁簿2 可能有較多標題行)
+                    # 判斷資料起始位置 (通常第 5 列開始為資料，即 index 4)
                     start_row = 4
                     if len(df_full) > 4:
-                        # 檢查第一欄是否有資料，如果是空標題則再往下一行
-                        if pd.isna(df_full.iloc[3, 0]): start_row = 4
+                        if pd.isna(df_full.iloc[3, 0]) and not pd.isna(df_full.iloc[4, 0]):
+                            start_row = 4
+                        elif not pd.isna(df_full.iloc[3, 0]):
+                            start_row = 3
                     
                     data_df = df_full.iloc[start_row:].copy()
-                    # 排除全空的列 (例如頁尾的分隔行)
+                    # 排除全空的列 (確保姓名或動態至少有一個有值)
                     data_df = data_df[data_df[0].notna() | data_df[3].notna()]
                     
                     mask = pd.Series(True, index=data_df.index)
                     if n_val:
                         mask &= data_df[0].astype(str).str.contains(n_val, na=False)
+                    
+                    # 日期篩選 (針對特殊格式合併 7,8,9 欄位)
+                    def get_date_str(row):
+                        parts = [str(row.get(i, "")).strip() for i in [7, 8, 9] if not pd.isna(row.get(i))]
+                        return "".join([p for p in parts if p.isdigit() or (len(p)>0 and p != "nan")])
+
+                    if d_val:
+                        mask &= data_df.apply(lambda r: d_val in get_date_str(r), axis=1)
+
                     if k_val:
                         k_mask = data_df.astype(str).apply(lambda x: x.str.contains(k_val, na=False)).any(axis=1)
                         mask &= k_mask
@@ -1019,16 +1110,9 @@ class TeacherStatsApp:
                         def gv(idx): 
                             val = r.get(idx, "")
                             if pd.isna(val): return "-"
-                            # 處理 float 轉文字
                             if isinstance(val, float) and val.is_integer(): return str(int(val))
                             return str(val).strip().replace("\n", " ")
                         
-                        # 合併日期 (年+月+日)
-                        date_parts = [gv(i) for i in [7, 8, 9] if gv(i).isdigit()]
-                        date_str = "".join(date_parts)
-                        
-                        # 活頁簿格式對應：
-                        # 0:姓名, 1:原單位, 2:原職稱, 3:動態, 4:新單位, 6:新職稱, 7+8+9:日期, 11:備註
                         vals = [
                             gv(0),      # 姓名
                             gv(1),      # 原單位
@@ -1036,8 +1120,8 @@ class TeacherStatsApp:
                             gv(3),      # 動態
                             gv(4),      # 新單位
                             gv(6),      # 新職稱
-                            date_str,   # 生效日期
-                            gv(11)      # 備註 (活頁簿2 備註通常在索引 11)
+                            get_date_str(r), # 生效日期
+                            gv(11)      # 備註
                         ]
                         self.tree8.insert("", tk.END, values=vals)
                     continue 
@@ -1059,6 +1143,8 @@ class TeacherStatsApp:
                 mask = pd.Series(True, index=df.index)
                 if n_val and c_name:
                     mask &= df[c_name].astype(str).str.contains(n_val, na=False)
+                if d_val and c_date:
+                    mask &= df[c_date].astype(str).str.contains(d_val, na=False)
                 if k_val:
                     k_mask = df.astype(str).apply(lambda x: x.str.contains(k_val, na=False)).any(axis=1)
                     mask &= k_mask
