@@ -14,7 +14,7 @@ except ImportError:
 class TeacherStatsApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("教師資料管理中心 - 行政綜合業務系統 (V9.4)")
+        self.root.title("教師資料管理中心 - 行政綜合業務系統 (V10)")
         self.root.geometry("1300x900")
 
         # 全域資料變數
